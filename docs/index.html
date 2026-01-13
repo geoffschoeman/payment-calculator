@@ -1,4 +1,50 @@
-<!doctypehtml><html lang="en"><meta charset="UTF-8"><meta name="viewport"content="width=device-width,initial-scale=1"><title>Payment Calculator</title><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css"rel="stylesheet"><link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css"rel="stylesheet"><style>body{background-color:#f8f9fa;min-height:100vh}.header{background-color:#495057;color:#fff;padding:2rem 0}.card{box-shadow:0 4px 12px rgba(0,0,0,.1)}.list-group-item-sm{padding:.5rem 1rem}.table-sm td,.table-sm th{padding:.5rem;font-size:.9rem}</style><nav class="navbar navbar-expand-lg navbar-dark bg-dark shadow-sm sticky-top"><div class="container"><div class="row"><a class="navbar-brand fw-bold"href="https://geoffschoeman.com"><i class="bi bi-globe"></i> geoffschoeman.com</a></div></div></nav><div class="max-w-4xl mx-auto px-4"><h1 class="text-4xl font-bold text-center mb-2 text-gray-800">Payment Calculator</h1></div><div class="container my-5"><div id="app"></div></div><script src="https://unpkg.com/react@18/umd/react.production.min.js"></script><script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script><script src="https://unpkg.com/@babel/standalone/babel.min.js"></script><script src="https://cdn.jsdelivr.net/npm/file-saver@2.0.5/dist/FileSaver.min.js"></script><script type="text/babel">const { useState, useEffect, useRef } = React;
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Payment Calculator</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet" />
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" rel="stylesheet" />
+  <style>
+    body { background-color: #f8f9fa; min-height: 100vh; }
+    .header { background-color: #495057; color: white; padding: 2rem 0; }
+    .card { box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
+    .list-group-item-sm { padding: 0.5rem 1rem; }
+    .table-sm th, .table-sm td { padding: 0.5rem; font-size: 0.9rem; }
+  </style>
+</head>
+<body>
+  <nav class="navbar navbar-expand-lg navbar-dark bg-dark shadow-sm sticky-top">
+      <div class="container">
+          <div class="row">
+              <a class="navbar-brand fw-bold" href="https://geoffschoeman.com">
+                  <i class="bi bi-globe"></i> geoffschoeman.com
+              </a>
+          </div>
+      </div>
+  </nav>
+  <div class="max-w-4xl mx-auto px-4">
+      <h1 class="text-4xl font-bold text-center mb-2 text-gray-800">
+        Payment Calculator
+      </h1>
+    </div>
+
+  <div class="container my-5">
+    <div id="app"></div>
+  </div>
+
+  <!-- React + ReactDOM -->
+  <script defer src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script defer src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+  <!-- Babel for JSX -->
+  <script defer src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <!-- FileSaver.js for clean export filenames -->
+  <script src="https://cdn.jsdelivr.net/npm/file-saver@2.0.5/dist/FileSaver.min.js"></script>
+
+  <script type="text/babel">
+    const { useState, useEffect, useRef } = React;
 
     // Helper: Convert frequency to monthly amount
     function calculateMonthlyAmount(amount, frequency) {
@@ -8,6 +54,39 @@
         case 'monthly':
         default:        return parseFloat(amount.toFixed(2));
       }
+    }
+
+    // ──────────────────────────────────────────────────────────────
+    // New helper: Calculate current required minimum payments in a month
+    // ──────────────────────────────────────────────────────────────
+    function calculateRequiredMinimums(currentDebts, expenses) {
+        const minExpenses = expenses.reduce((sum, e) => sum + calculateMonthlyAmount(e.amount, e.frequency), 0);
+
+        let minDebts = 0;
+        currentDebts.forEach(debt => {
+            if (debt.balance <= 0.01) return;
+
+            let minPay = parseFloat(debt.monthlyPayment.toFixed(2));
+
+            // Credit card fallback minimum
+            if (debt.type === 'card') {
+                const ccMin = Math.max(25, parseFloat((debt.balance * 0.03).toFixed(2)));
+                minPay = Math.max(minPay, ccMin);
+            }
+
+            // Never pay less than interest + tiny bit (avoid infinite loop)
+            const monthlyRate = debt.apr / 12 / 100;
+            const interest = debt.balance * monthlyRate;
+            if (minPay < interest) minPay = parseFloat((interest + 0.01).toFixed(2));
+
+            minDebts += minPay;
+        });
+
+        return {
+            expenses: parseFloat(minExpenses.toFixed(2)),
+            debts: parseFloat(minDebts.toFixed(2)),
+            totalRequired: parseFloat((minExpenses + minDebts).toFixed(2))
+        };
     }
 
     // Core avalanche schedule generator (used for summary)
@@ -63,80 +142,242 @@
       return { months: month - 1, totalInterest: parseFloat(totalInterest.toFixed(2)) };
     }
 
-    // Full schedule with dates and expenses
-    function generateSchedule(expenses, debts, extraPayment, extraPaymentFrequency, startDate) {
-      const totalExpenses = expenses.reduce((sum, e) => sum + calculateMonthlyAmount(e.amount, e.frequency), 0);
+    // ──────────────────────────────────────────────────────────────
+    // Updated generateSchedule – now with target monthly budget support
+    // ──────────────────────────────────────────────────────────────
+    function generateSchedule(expenses, debts, targetMonthlyPayment, extraPayment, extraPaymentFrequency, startDate) {
+        const useTargetBudget = parseFloat(targetMonthlyPayment) > 0;
+        const target = useTargetBudget ? parseFloat(targetMonthlyPayment) : 0;
 
-      let remainingDebts = debts.map(debt => ({
-        ...debt,
-        balance: parseFloat(debt.principal.toFixed(2)),
-        monthlyPayment: parseFloat(debt.payment.toFixed(2))
-      }));
+        let remainingDebts = debts.map(d => ({
+            ...d,
+            balance: parseFloat(d.principal.toFixed(2)),
+            monthlyPayment: parseFloat(d.payment.toFixed(2))
+        }));
 
-      const schedule = [];
-      let totalInterest = 0;
-      let month = 1;
-      const maxMonths = 10000;
-      const baseDate = startDate ? new Date(startDate) : new Date();
+        const schedule = [];
+        let totalInterest = 0;
+        let month = 1;
+        const maxMonths = 10000;
+        const baseDate = startDate ? new Date(startDate) : new Date();
 
-      while (remainingDebts.some(d => d.balance > 0.01) && month <= maxMonths) {
-        const activeDebts = remainingDebts.filter(d => d.balance > 0.01).sort((a, b) => b.apr - a.apr);
+        while (remainingDebts.some(d => d.balance > 0.01) && month <= maxMonths) {
+            const activeDebts = remainingDebts
+                .filter(d => d.balance > 0.01)
+                .sort((a, b) => b.apr - a.apr); // avalanche
 
-        let extra = 0;
-        if (extraPaymentFrequency === 'monthly') extra = parseFloat(extraPayment.toFixed(2));
-        else if (extraPaymentFrequency === 'yearly') extra = parseFloat((extraPayment / 12).toFixed(2));
-        else if (extraPaymentFrequency === 'one-time' && month === 1) extra = parseFloat(extraPayment.toFixed(2));
+            const currentDate = new Date(baseDate);
+            currentDate.setMonth(baseDate.getMonth() + month - 1);
+            const formattedDate = currentDate.toISOString().split('T')[0];
 
-        const currentDate = new Date(baseDate);
-        currentDate.setMonth(baseDate.getMonth() + month - 1);
-        const formattedDate = currentDate.toISOString().split('T')[0];
+            const monthData = {
+                month,
+                date: formattedDate,
+                expenses: 0,
+                debts: {},
+                totalPayment: 0
+            };
 
-        const monthData = {
-          month,
-          date: formattedDate,
-          expenses: totalExpenses.toFixed(2),
-          debts: {},
-          totalPayment: parseFloat(totalExpenses.toFixed(2))
+            // Fixed expenses stay the same every month
+            const fixedExpenses = expenses.reduce((sum, e) => {
+                const m = calculateMonthlyAmount(e.amount, e.frequency);
+                monthData.expenses += m;
+                return sum + m;
+            }, 0);
+            monthData.expenses = parseFloat(monthData.expenses.toFixed(2));
+
+            // Always calculate base available from target (0 if not set)
+            let availableForDebts = 0;
+            if (useTargetBudget) {
+                availableForDebts = target - monthData.expenses;
+            }
+
+// Always add the extra payment on top (regardless of target)
+            let extraThisMonth = 0;
+            if (extraPaymentFrequency === 'monthly') {
+                extraThisMonth = parseFloat(extraPayment.toFixed(2));
+            } else if (extraPaymentFrequency === 'yearly') {
+                extraThisMonth = parseFloat((extraPayment / 12).toFixed(2));
+            } else if (extraPaymentFrequency === 'one-time' && month === 1) {
+                extraThisMonth = parseFloat(extraPayment.toFixed(2));
+            }
+
+            availableForDebts += extraThisMonth;
+            availableForDebts = Math.max(0, parseFloat(availableForDebts.toFixed(2)));
+
+            // Calculate current minimum required for debts this month
+            const minDebtPayments = {};
+            let totalMinDebtThisMonth = 0;
+
+            remainingDebts.forEach(debt => {
+                if (debt.balance <= 0.01) {
+                    minDebtPayments[debt.name] = 0;
+                    return;
+                }
+
+                const monthlyRate = debt.apr / 12 / 100;
+                const interest = parseFloat((debt.balance * monthlyRate).toFixed(2));
+                totalInterest += interest;
+
+                let minPay = Math.max(debt.monthlyPayment, 0.01);
+
+                if (debt.type === 'card') {
+                    const ccMin = Math.max(25, parseFloat((debt.balance * 0.03).toFixed(2)));
+                    minPay = Math.max(minPay, ccMin);
+                }
+                if (minPay < interest) minPay = parseFloat((interest + 0.01).toFixed(2));
+
+                minDebtPayments[debt.name] = minPay;
+                totalMinDebtThisMonth += minPay;
+            });
+
+            // How much extra we can really apply after minimums
+            let rollingExtra = Math.max(0, availableForDebts - totalMinDebtThisMonth);
+
+            // Apply payments – first minimums, then avalanche the rest
+            remainingDebts = remainingDebts.map(debt => {
+                if (debt.balance <= 0.01) {
+                    monthData.debts[debt.name] = { payment: "0.00", extra: "0.00", balance: "0.00" };
+                    return { ...debt, balance: 0 };
+                }
+
+                const monthlyRate = debt.apr / 12 / 100;
+                const interest = parseFloat((debt.balance * monthlyRate).toFixed(2));
+
+                const minPay = minDebtPayments[debt.name] || 0;
+                let extraThisDebt = 0;
+
+                // Apply rolling extra to highest interest debt first
+                if (rollingExtra > 0 && activeDebts[0]?.name === debt.name) {
+                    extraThisDebt = Math.min(rollingExtra, debt.balance + interest - minPay);
+                    rollingExtra -= extraThisDebt;
+                }
+
+                const totalPaymentThisDebt = parseFloat((minPay + extraThisDebt).toFixed(2));
+                const principalPaid = Math.min(totalPaymentThisDebt - interest, debt.balance);
+                const newBalance = Math.max(0, parseFloat((debt.balance - principalPaid).toFixed(2)));
+
+                monthData.debts[debt.name] = {
+                    payment: totalPaymentThisDebt.toFixed(2),
+                    extra: extraThisDebt.toFixed(2),
+                    balance: newBalance.toFixed(2)
+                };
+
+                monthData.totalPayment += totalPaymentThisDebt;
+
+                return { ...debt, balance: newBalance };
+            });
+
+            monthData.totalPayment = parseFloat((monthData.totalPayment + monthData.expenses).toFixed(2));
+            schedule.push(monthData);
+            month++;
+        }
+
+        return {
+            schedule,
+            months: month - 1,
+            totalInterest: parseFloat(totalInterest.toFixed(2))
         };
+    }
 
-        remainingDebts = remainingDebts.map(debt => {
-          if (debt.balance <= 0.01) {
-            monthData.debts[debt.name] = { payment: "0.00", extra: "0.00", balance: "0.00" };
-            return { ...debt, balance: 0 };
-          }
+    // ──────────────────────────────────────────────────────────────
+    // Summary version using target monthly payment (no full schedule, just totals)
+    // ──────────────────────────────────────────────────────────────
+    function generateTargetSummary(expenses, debts, targetMonthlyPayment, extraPayment, extraPaymentFrequency) {
+        const target = parseFloat(targetMonthlyPayment);
+        if (isNaN(target) || target <= 0) return null;
 
-          const monthlyRate = debt.apr / 12 / 100;
-          const interest = parseFloat((debt.balance * monthlyRate).toFixed(2));
-          totalInterest += interest;
+        let remainingDebts = debts.map(d => ({
+            ...d,
+            balance: parseFloat(d.principal.toFixed(2)),
+            monthlyPayment: parseFloat(d.payment.toFixed(2))
+        }));
 
-          let payment = Math.max(debt.monthlyPayment, 0.01);
-          if (payment < interest && extra <= 0) payment = interest + 0.01;
+        let totalInterest = 0;
+        let month = 1;
+        const maxMonths = 10000;
 
-          let extraApplied = 0;
-          if (extra > 0 && activeDebts[0]?.name === debt.name) {
-            extraApplied = Math.min(extra, debt.balance + interest - payment);
-            extra -= extraApplied;
-          }
+        while (remainingDebts.some(d => d.balance > 0.01) && month <= maxMonths) {
+            const activeDebts = remainingDebts
+                .filter(d => d.balance > 0.01)
+                .sort((a, b) => b.apr - a.apr);
 
-          const totalPayment = parseFloat((payment + extraApplied).toFixed(2));
-          const principalPaid = Math.min(totalPayment - interest, debt.balance);
-          const newBalance = parseFloat((debt.balance - principalPaid).toFixed(2));
+            const monthlyExpenses = expenses.reduce((sum, e) => {
+                return sum + calculateMonthlyAmount(e.amount, e.frequency);
+            }, 0);
 
-          monthData.debts[debt.name] = {
-            payment: totalPayment.toFixed(2),
-            extra: extraApplied.toFixed(2),
-            balance: newBalance.toFixed(2)
-          };
-          monthData.totalPayment = parseFloat((monthData.totalPayment + totalPayment).toFixed(2));
+            // Base from target
+            let availableForDebts = target - monthlyExpenses;
 
-          return { ...debt, balance: newBalance };
-        });
+            // Add extra on top (same logic as in generateSchedule)
+            let extraThisMonth = 0;
+            if (extraPaymentFrequency === 'monthly') {
+                extraThisMonth = parseFloat(extraPayment.toFixed(2));
+            } else if (extraPaymentFrequency === 'yearly') {
+                extraThisMonth = parseFloat((extraPayment / 12).toFixed(2));
+            } else if (extraPaymentFrequency === 'one-time' && month === 1) {
+                extraThisMonth = parseFloat(extraPayment.toFixed(2));
+            }
 
-        schedule.push(monthData);
-        month++;
-      }
+            availableForDebts += extraThisMonth;
+            availableForDebts = Math.max(0, parseFloat(availableForDebts.toFixed(2)));
 
-      return { schedule, months: month - 1, totalInterest: parseFloat(totalInterest.toFixed(2)) };
+            // Calculate minimum debt payments
+            let totalMinDebt = 0;
+            const minDebtPayments = {};
+
+            remainingDebts.forEach(debt => {
+                if (debt.balance <= 0.01) {
+                    minDebtPayments[debt.name] = 0;
+                    return;
+                }
+
+                const monthlyRate = debt.apr / 12 / 100;
+                const interest = debt.balance * monthlyRate;
+                totalInterest += interest;
+
+                let minPay = Math.max(debt.monthlyPayment, 0.01);
+                if (debt.type === 'card') {
+                    const ccMin = Math.max(25, (debt.balance * 0.03));
+                    minPay = Math.max(minPay, ccMin);
+                }
+                if (minPay < interest) minPay = interest + 0.01;
+
+                minDebtPayments[debt.name] = minPay;
+                totalMinDebt += minPay;
+            });
+
+            let rollingExtra = Math.max(0, availableForDebts - totalMinDebt);
+
+            // Update balances (avalanche style)
+            remainingDebts = remainingDebts.map(debt => {
+                if (debt.balance <= 0.01) return { ...debt, balance: 0 };
+
+                const monthlyRate = debt.apr / 12 / 100;
+                const interest = debt.balance * monthlyRate;
+
+                const minPay = minDebtPayments[debt.name] || 0;
+                let extraThisDebt = 0;
+
+                if (rollingExtra > 0 && activeDebts[0]?.name === debt.name) {
+                    extraThisDebt = Math.min(rollingExtra, debt.balance + interest - minPay);
+                    rollingExtra -= extraThisDebt;
+                }
+
+                const totalPayment = minPay + extraThisDebt;
+                const principalPaid = Math.min(totalPayment - interest, debt.balance);
+                const newBalance = Math.max(0, debt.balance - principalPaid);
+
+                return { ...debt, balance: newBalance };
+            });
+
+            month++;
+        }
+
+        return {
+            months: month - 1,
+            totalInterest: parseFloat(totalInterest.toFixed(2))
+        };
     }
 
     function App() {
@@ -154,53 +395,87 @@
       const [showSchedule, setShowSchedule] = useState(false);
       const [editing, setEditing] = useState(null);
       const fileInputRef = useRef(null);
+      const [targetMonthlyPayment, setTargetMonthlyPayment] = useState('');
 
-      // Load from localStorage
-      useEffect(() => {
-        const saved = localStorage.getItem('financialTrackerData');
-        if (saved) {
-          const data = JSON.parse(saved);
-          setExpenses(data.expenses || []);
-          setDebts(data.debts || []);
-          setStartDate(data.startDate || new Date().toISOString().split('T')[0]);
-          setExtraPayment(data.extraPayment || 0);
-          setExtraPaymentFrequency(data.extraPaymentFrequency || 'monthly');
-        } else {
-          setStartDate(new Date().toISOString().split('T')[0]);
-        }
-      }, []);
+        useEffect(() => {
+            // Initialize all Bootstrap tooltips on the page
+            const tooltipTriggerList = document.querySelectorAll('[data-bs-toggle="tooltip"]');
+            const tooltipList = [...tooltipTriggerList].map(tooltipTriggerEl => {
+                return new bootstrap.Tooltip(tooltipTriggerEl, {
+                    // Optional: customize behavior if needed
+                    trigger: 'hover',       // default is hover + focus
+                    delay: { show: 300, hide: 100 }  // slight delay for better UX
+                });
+            });
 
-      // Save to localStorage
-      useEffect(() => {
-        const data = { expenses, debts, startDate, extraPayment, extraPaymentFrequency };
-        localStorage.setItem('financialTrackerData', JSON.stringify(data));
-      }, [expenses, debts, startDate, extraPayment, extraPaymentFrequency]);
+            // Cleanup: dispose tooltips when component unmounts
+            return () => {
+                tooltipList.forEach(tooltip => tooltip.dispose());
+            };
+        }, []);
 
-      const exportData = () => {
-        const data = { expenses, debts, startDate, extraPayment, extraPaymentFrequency };
-        const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-        saveAs(blob, `payment-calculator-${new Date().toISOString().slice(0,10)}.json`);
-      };
+        // Load from localStorage
+        useEffect(() => {
+            const saved = localStorage.getItem('financialTrackerData');
+            if (saved) {
+                const data = JSON.parse(saved);
+                setExpenses(data.expenses || []);
+                setDebts(data.debts || []);
+                setStartDate(data.startDate || new Date().toISOString().split('T')[0]);
+                setExtraPayment(data.extraPayment || 0);
+                setExtraPaymentFrequency(data.extraPaymentFrequency || 'monthly');
+                setTargetMonthlyPayment(data.targetMonthlyPayment || '');
+            } else {
+                setStartDate(new Date().toISOString().split('T')[0]);
+            }
+        }, []);
+
+        // Save to localStorage
+        useEffect(() => {
+            const data = {
+                expenses,
+                debts,
+                startDate,
+                extraPayment,
+                extraPaymentFrequency,
+                targetMonthlyPayment
+            };
+            localStorage.setItem('financialTrackerData', JSON.stringify(data));
+        }, [expenses, debts, startDate, extraPayment, extraPaymentFrequency, targetMonthlyPayment]);
+
+        const exportData = () => {
+            const data = {
+                expenses,
+                debts,
+                startDate,
+                extraPayment,
+                extraPaymentFrequency,
+                targetMonthlyPayment   // ← added
+            };
+            const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+            saveAs(blob, `payment-calculator-${new Date().toISOString().slice(0,10)}.json`);
+        };
 
       const importData = (e) => {
         const file = e.target.files[0];
         if (!file) return;
         const reader = new FileReader();
-        reader.onload = (ev) => {
-          try {
-            const data = JSON.parse(ev.target.result);
-            setExpenses(data.expenses || []);
-            setDebts(data.debts || []);
-            setStartDate(data.startDate || new Date().toISOString().split('T')[0]);
-            setExtraPayment(data.extraPayment || 0);
-            setExtraPaymentFrequency(data.extraPaymentFrequency || 'monthly');
-            setEditing(null);
-            resetForm();
-            alert('Data imported successfully!');
-          } catch (err) {
-            alert('Invalid JSON file');
-          }
-        };
+          reader.onload = (ev) => {
+              try {
+                  const data = JSON.parse(ev.target.result);
+                  setExpenses(data.expenses || []);
+                  setDebts(data.debts || []);
+                  setStartDate(data.startDate || new Date().toISOString().split('T')[0]);
+                  setExtraPayment(data.extraPayment || 0);
+                  setExtraPaymentFrequency(data.extraPaymentFrequency || 'monthly');
+                  setTargetMonthlyPayment(data.targetMonthlyPayment || '');   // ← added
+                  setEditing(null);
+                  resetForm();
+                  alert('Data imported successfully!');
+              } catch (err) {
+                  alert('Invalid JSON file');
+              }
+          };
         reader.readAsText(file);
       };
 
@@ -281,24 +556,57 @@
         }
       };
 
-      const { schedule = [], months = 0, totalInterest = 0 } = showSchedule
-        ? generateSchedule(expenses, debts, parseFloat(extraPayment || 0), extraPaymentFrequency, startDate)
-        : {};
+        const { schedule = [], months = 0, totalInterest = 0 } = showSchedule
+            ? generateSchedule(
+                expenses,
+                debts,
+                targetMonthlyPayment,           // string from input
+                parseFloat(extraPayment || 0),
+                extraPaymentFrequency,
+                startDate
+            )
+            : {};
 
-      const summary = showSchedule && debts.length > 0
-        ? (() => {
-            const withExtra = generateDebtSchedule(debts, parseFloat(extraPayment || 0), extraPaymentFrequency);
-            const withoutExtra = generateDebtSchedule(debts, 0, 'monthly');
-            return {
-              monthsWithExtra: withExtra.months,
-              monthsWithoutExtra: withoutExtra.months,
-              monthsSaved: Math.max(0, withoutExtra.months - withExtra.months),
-              interestWithExtra: withExtra.totalInterest,
-              interestWithoutExtra: withoutExtra.totalInterest,
-              interestSaved: Math.max(0, (withoutExtra.totalInterest - withExtra.totalInterest).toFixed(2))
-            };
-          })()
-        : null;
+        const summary = showSchedule && debts.length > 0
+            ? (() => {
+                // Always calculate the "minimum payments only" case for comparison
+                const withoutExtra = generateDebtSchedule(debts, 0, 'monthly');
+
+                let withTargetOrExtra;
+
+                if (parseFloat(targetMonthlyPayment) > 0) {
+                    // Use target budget + extra payment on top
+                    withTargetOrExtra = generateTargetSummary(
+                        expenses,
+                        debts,
+                        targetMonthlyPayment,
+                        extraPayment,           // pass these so extra can be added
+                        extraPaymentFrequency
+                    );
+                } else {
+                    // Fallback to old extra payment only
+                    withTargetOrExtra = generateDebtSchedule(
+                        debts,
+                        parseFloat(extraPayment || 0),
+                        extraPaymentFrequency
+                    );
+                }
+
+                if (!withTargetOrExtra) return null;
+
+                const monthsWith = withTargetOrExtra.months;
+                const interestWith = withTargetOrExtra.totalInterest;
+
+                return {
+                    monthsWithExtra: monthsWith,
+                    monthsWithoutExtra: withoutExtra.months,
+                    monthsSaved: Math.max(0, withoutExtra.months - monthsWith),
+                    interestWithExtra: interestWith,
+                    interestWithoutExtra: withoutExtra.totalInterest,
+                    interestSaved: Math.max(0, (withoutExtra.totalInterest - interestWith).toFixed(2))
+                };
+            })()
+            : null;
 
       const allItems = [
         ...expenses.map((e, i) => ({ ...e, type: 'expense', index: i })),
@@ -415,26 +723,70 @@
               </ul>
             )}
 
-            {/* Extra Payment & Schedule Toggle */}
-            <div className="row g-3 align-items-end">
-              <div className="col-md-3">
-                <label className="form-label">Extra Payment</label>
-                <input type="number" className="form-control" value={extraPayment} onChange={e => setExtraPayment(e.target.value || 0)} step="0.01" />
+              {/* Compact single-row inputs */}
+              <div className="row g-2 align-items-end mb-4">
+                  <div className="col-md-3 col-sm-6">
+                      <label
+                          className="form-label small"
+                          data-bs-toggle="tooltip"
+                          data-bs-placement="top"
+                          title="Your fixed monthly budget for ALL expenses + debt payments. As debts are paid off, the freed-up money automatically goes toward higher-interest debts."
+                      >
+                          Target Monthly
+                      </label>
+                      <input
+                          type="number"
+                          className="form-control form-control-sm"
+                          placeholder="e.g. 2500"
+                          value={targetMonthlyPayment}
+                          onChange={e => setTargetMonthlyPayment(e.target.value || '')}
+                          step="0.01"
+                      />
+                  </div>
+
+                  <div className="col-md-3 col-sm-6">
+                      <label
+                          className="form-label small"
+                          data-bs-toggle="tooltip"
+                          data-bs-placement="top"
+                          title="Additional amount added on top of your target every month (or per selected frequency). Great for bonuses, tax refunds, or extra side income."
+                      >
+                          Extra Payment
+                      </label>
+                      <input
+                          type="number"
+                          className="form-control form-control-sm"
+                          value={extraPayment}
+                          onChange={e => setExtraPayment(parseFloat(e.target.value) || 0)}
+                          step="0.01"
+                          min="0"
+                      />
+                  </div>
+
+                  {/* Frequency and button remain the same */}
+                  <div className="col-md-2 col-sm-6">
+                      <label
+                          className="form-label small"
+                          data-bs-toggle="tooltip"
+                          data-bs-placement="top"
+                          title="The frequency of the extra payment being applied."
+                      >
+                          Frequency
+                      </label>
+                      <select className="form-select form-select-sm" value={extraPaymentFrequency} onChange={e => setExtraPaymentFrequency(e.target.value)}>
+                          <option value="monthly">Monthly</option>
+                          <option value="yearly">Yearly</option>
+                          <option value="one-time">One-Time</option>
+                      </select>
+                  </div>
+
+                  <div className="col-md-4 col-sm-6">
+                      <button className="btn btn-success w-100 btn-sm mt-md-4" onClick={() => setShowSchedule(!showSchedule)}>
+                          {showSchedule ? 'Hide' : 'Show'} Schedule
+                      </button>
+                  </div>
               </div>
-              <div className="col-md-3">
-                <label className="form-label">Frequency</label>
-                <select className="form-select" value={extraPaymentFrequency} onChange={e => setExtraPaymentFrequency(e.target.value)}>
-                  <option value="one-time">One-Time</option>
-                  <option value="monthly">Monthly</option>
-                  <option value="yearly">Yearly</option>
-                </select>
-              </div>
-              <div className="col-md-3">
-                <button className="btn btn-success w-100" onClick={() => setShowSchedule(!showSchedule)}>
-                  {showSchedule ? 'Hide' : 'Show'} Payment Schedule
-                </button>
-              </div>
-            </div>
+
 
             {/* Schedule & Summary */}
             {showSchedule && schedule.length > 0 && (
@@ -448,7 +800,7 @@
                           <h5 className="mb-0">Repayment Summary</h5>
                         </div>
                         <div className="card-body">
-                          {extraPayment > 0 && summary.monthsSaved > 0 && (
+                          {summary.monthsSaved > 0 && (
                             <div className="alert alert-success">
                               You save <strong>{summary.monthsSaved} months</strong> and <strong>${summary.interestSaved}</strong> in interest!
                             </div>
@@ -518,4 +870,12 @@
       );
     }
 
-    ReactDOM.createRoot(document.getElementById('app')).render(<App />);</script><footer class="bg-dark text-white py-2 mt-5 sticky-bottom mt-auto"><div class="container text-center"><p class="mb-0">&copy; 2012 - 2025 geoffschoeman.com</div></footer>
+    ReactDOM.createRoot(document.getElementById('app')).render(<App />);
+  </script>
+  <footer class="bg-dark text-white py-2 mt-5 sticky-bottom mt-auto">
+      <div class="container text-center">
+          <p class="mb-0">&copy; 2012 - 2025 geoffschoeman.com</p>
+      </div>
+  </footer>
+</body>
+</html>
